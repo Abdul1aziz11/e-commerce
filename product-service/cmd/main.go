@@ -1,48 +1,52 @@
 package main
 
 import (
-    "database/sql"
-    "fmt"
-    "log"
-    "net"
-    "product/config"
-    hand "product/handler"
-    "product/repository"
-    "product/service"
-    prodpb "product/proto/productproto"
+	"database/sql"
+	"fmt"
+	"log"
+	"net"
+	"product-service/config"
+	"product-service/pkg/logger"
+	productpb "product-service/protos/product-service"
+	"product-service/service"
 
-    _ "github.com/lib/pq"
-    "github.com/joho/godotenv"
-    "google.golang.org/grpc"
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
+	"google.golang.org/grpc"
 )
 
 func main() {
-    err := godotenv.Load()
-    if err != nil {
-        log.Fatalf("Error loading .env file")
-    }
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatalf("Error loading .env file")
+	}
 
-    cfg := config.LoadConfig()
-    db, err := sql.Open("postgres", "host="+cfg.DBHost+" port="+cfg.DBPort+" user="+cfg.DBUser+" dbname="+cfg.DBName+" password="+cfg.DBPassword+" sslmode=disable")
-    if err != nil {
-        log.Fatalf("failed to connect to database: %v", err)
-    }
-    defer db.Close()
+	logg := logger.New("debug", "product-service")
+	defer logger.Cleanup(logg)
 
-    repo := repository.NewPostgresRepository(db)
-    service := service.NewProductService(repo)
-    server := hand.NewServer(service)
+	cfg, err := config.LoadConfig(".")
+	if err != nil {
+		log.Fatalf("Error loading config: %v", err)
+	}
 
-    fmt.Println("Server is running on port 8003")
-    lis, err := net.Listen("tcp", ":8003")
-    if err != nil {
-        log.Fatalf("failed to listen: %v", err)
-    }
+	db, err := sql.Open("postgres", "host="+cfg.Postgres.Host+" port="+cfg.Postgres.Port+" user="+cfg.Postgres.User+" password="+cfg.Postgres.Password+" dbname="+cfg.Postgres.Database+" sslmode=disable")
+	if err != nil {
+		log.Fatalf("failed to connect to the database: %v", err)
+	}
+	defer db.Close()
 
-    s := grpc.NewServer()
-    prodpb.RegisterProductServiceServer(s, server)
+	productService := service.NewProductService(db, logg)
 
-    if err := s.Serve(lis); err != nil {
-        log.Fatalf("failed to serve: %v", err)
-    }
+	fmt.Println("Server is running on port :", cfg.ProductServicePort)
+	lis, err := net.Listen("tcp", ":"+cfg.ProductServicePort)
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
+
+	s := grpc.NewServer()
+	productpb.RegisterProductServiceServer(s, productService)
+
+	if err := s.Serve(lis); err != nil {
+		log.Fatalf("failed to serve: %v", err)
+	}
 }
